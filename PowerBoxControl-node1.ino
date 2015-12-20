@@ -5,6 +5,10 @@
 #include <DallasTemperature.h>
 #include <OneWire.h>
 #include <SimpleTimer.h>
+#include <DigitalIO.h>
+#include <Bounce2.h>
+#include <avr/wdt.h>
+
 
  #define NDEBUG                        // enable local debugging information
 
@@ -17,18 +21,24 @@
 #define CHILD_ID_POWEOFFRELAY				  30  //Реле 1
 
 #define CHILD_ID_POWEOFFRELAY_STATUS	  20  //Фоторезистор на светодиоде статуса реле 1
+#define CHILD_ID_MODEBUTTON             40
 
 #define REBOOT_CHILD_ID                       100
 #define RECHECK_SENSOR_VALUES                 101 
-#define DISABLE_SWITCHOFFPOWER_CHILD_ID  	  102
+#define DISABLE_SWITCHOFFPOWER_CHILD_ID  	    102
+#define NIGHTMODE_CHILD_ID                    105
+
 
 /******************************************************************************************************/
 /*                               				IO												                                    */
 /******************************************************************************************************/
 
 #define ONE_WIRE_BUS              3      // Pin where dallase sensor is connected 
-#define POWEOFFRELAY_PIN		  4
-#define LIGHT_SENSOR_POWEOFFRELAY A4       
+#define POWEOFFRELAY_PIN		      4
+#define LIGHT_SENSOR_POWEOFFRELAY A4 
+#define LIGHT_SENSOR_AMBIENT      A5        
+#define MODELED_PIN               A3
+#define MODEBUTTON_PIN            5
 
 /*****************************************************************************************************/
 /*                               				Common settings									      */
@@ -61,6 +71,15 @@ boolean boolRecheckSensorValues = false;
 boolean boolSwitchOffPowerDisabled = false;
 
 int lastRelayPowerStatusLightLevel;             // Holds last light level
+boolean boolHardwareSwitchOffPowerDisabled = false;
+
+float highestSensorsTemperature = 0;
+
+boolean boolNightMode = false;
+
+
+Bounce debouncer = Bounce(); 
+
 
 // Initialize temperature message
 MyMessage TempMsg(0, V_TEMP);  //CHILD_ID_TEMPERATURE
@@ -71,18 +90,36 @@ MyMessage SwitchOffPowerCheckStateMsg(DISABLE_SWITCHOFFPOWER_CHILD_ID, V_TRIPPED
 
 MyMessage RelayPowerStatusLightMsg(CHILD_ID_POWEOFFRELAY_STATUS, V_LIGHT_LEVEL);
 
-
-MySensor gw;
-SimpleTimer timer;
-SimpleTimer SwitchOffPowerCheckStateReporttimer;
-SimpleTimer checkRelayPowerStatus;;
+MyMessage ButtonStateMsg(CHILD_ID_MODEBUTTON, V_TRIPPED);
 
 boolean receivedConfig = false;
 boolean metric = true; 
 
+SimpleTimer timer;
+SimpleTimer SwitchOffPowerCheckStateReporttimer;
+SimpleTimer checkRelayPowerStatus;
+SimpleTimer checkHardwareButton;
+
+
+
+MySensor gw;
+
+
+
 
 void setup()  
 { 
+
+//set GRB LED pin modes
+pinMode(A0, OUTPUT);
+pinMode(A1, OUTPUT);
+pinMode(A2, OUTPUT);
+
+// begin setup
+setLEDColor(false,false,true);
+
+
+
   // Startup up the OneWire library
   sensors.begin();
   // requestTemperatures() will not block current thread
@@ -135,51 +172,81 @@ void setup()
      }
      
      gw.present(sidx, S_TEMP);
-     #ifdef NDEBUG
-       Serial.println();
-       Serial.print(i);
-       Serial.print(F(" index: "));
-       Serial.print(sidx);
-       Serial.print(F(" address: "));
-       printAddress(dsaddr[i]);
-       Serial.println();
-     #endif
+  //   #ifdef NDEBUG
+  //     Serial.println();
+  //     Serial.print(i);
+  //     Serial.print(F(" index: "));
+  //     Serial.print(sidx);
+  //     Serial.print(F(" address: "));
+  //     printAddress(dsaddr[i]);
+  //     Serial.println();
+  //   #endif
   }
 
     //reboot sensor command
-    gw.present(REBOOT_CHILD_ID, S_BINARY); 
+    gw.wait(RADIO_RESET_DELAY_TIME);
+    gw.present(REBOOT_CHILD_ID, S_BINARY);
 
     //reget sensor values
+    gw.wait(RADIO_RESET_DELAY_TIME);
   	gw.present(RECHECK_SENSOR_VALUES, S_LIGHT); 
 
 	//disable temp difference check
+     gw.wait(RADIO_RESET_DELAY_TIME);
   	gw.present(DISABLE_SWITCHOFFPOWER_CHILD_ID, S_LIGHT); 
 
 
     // Relays
-    pinMode(POWEOFFRELAY_PIN, OUTPUT);  
+    pinMode(POWEOFFRELAY_PIN, OUTPUT); 
+    gw.wait(RADIO_RESET_DELAY_TIME); 
     gw.present(CHILD_ID_POWEOFFRELAY, S_LIGHT);    
  
     //Relays status light sensors
     pinMode(LIGHT_SENSOR_POWEOFFRELAY, INPUT);
+    gw.wait(RADIO_RESET_DELAY_TIME);
     gw.present(CHILD_ID_POWEOFFRELAY_STATUS, S_LIGHT_LEVEL);
 
+    //Button
+    gw.wait(RADIO_RESET_DELAY_TIME);
+    gw.present(CHILD_ID_MODEBUTTON, V_TRIPPED); 
 
+    //Night mode
+    gw.wait(RADIO_RESET_DELAY_TIME);
+    gw.present(NIGHTMODE_CHILD_ID, V_TRIPPED); 
+
+     //set led pin mode
+      pinMode(MODELED_PIN, OUTPUT);
+      digitalWrite(MODELED_PIN, LOW);
+      // Setup the button
+      pinMode(MODEBUTTON_PIN,INPUT);
+      // Activate internal pull-up
+      digitalWrite(MODEBUTTON_PIN,HIGH);
+  
+      // After setting up the button, setup debouncer
+      debouncer.attach(MODEBUTTON_PIN);
+      debouncer.interval(5);
+ 
+      checkButtonState();
 
   // start our periodic jobs
   // many other periodic jobs can be added here
-  timer.setInterval(30000, checkTemperature);
-  SwitchOffPowerCheckStateReporttimer.setInterval(60000, reportSwitchOffPowerCheckState);
-  checkRelayPowerStatus.setInterval(60000, checkRelayStatus);
+  timer.setInterval(15000, checkTemperature);
+  SwitchOffPowerCheckStateReporttimer.setInterval(120000, reportSwitchOffPowerCheckState);
+  checkRelayPowerStatus.setInterval(120000, checkRelayStatus);
+  checkHardwareButton.setInterval(5000, checkButtonState);
+
 
   //Enable watchdog timer
   wdt_enable(WDTO_8S);
 
 
-        #ifdef NDEBUG
-          Serial.print(F("End setup "));
+// end setup
+setLEDColor(false,false,false);
 
-        #endif
+//        #ifdef NDEBUG
+//          Serial.print(F("End setup "));
+
+//        #endif
 
 }
 
@@ -188,6 +255,7 @@ void loop() {
   timer.run();
   SwitchOffPowerCheckStateReporttimer.run();
   checkRelayPowerStatus.run();
+  checkHardwareButton.run();
 
   gw.process();
 
@@ -196,6 +264,7 @@ if (boolRecheckSensorValues)
 {
   checkTemperature();
   checkRelayStatus();
+  checkButtonState();
 
   boolRecheckSensorValues = false;
 }
@@ -226,16 +295,14 @@ void incomingMessage(const MyMessage &message) {
                
                if (message.getBool())
                {
-               		digitalWrite(POWEOFFRELAY_PIN, RELAY_ON);
-               		gw.wait(200);
-               		digitalWrite(POWEOFFRELAY_PIN, RELAY_OFF);
+               		switchPowerOFF();
 
                }
          }
      
      }
 
-    if ( message.sensor == DISABLE_SWITCHOFFPOWER_CHILD_ID ) {
+    if ( message.sensor == DISABLE_SWITCHOFFPOWER_CHILD_ID && !boolHardwareSwitchOffPowerDisabled) {
          
          if (message.getBool() == true)
          {
@@ -247,9 +314,24 @@ void incomingMessage(const MyMessage &message) {
          }
 
      }
+    if ( message.sensor == NIGHTMODE_CHILD_ID  ) {
+         
+         if (message.getBool() == true)
+         {
+            setLEDColor(false,false,false);
+            digitalWrite(MODELED_PIN, LOW);
+            boolNightMode = true;
+         }
+         else
+         {
+            boolNightMode = false;
+            digitalWrite(MODELED_PIN, boolHardwareSwitchOffPowerDisabled ? 1 : 0);
+         }
+
+     }
 
 
-    if ( message.sensor == RECHECK_SENSOR_VALUES ) {
+    if ( message.sensor == RECHECK_SENSOR_VALUES) {
          
          if (message.getBool() == true)
          {
@@ -328,6 +410,7 @@ void readTemperature(){
   // Fetch and round temperature to one decimal
   float temperature = static_cast<float>(static_cast<int>((gw.getConfig().isMetric?sensors.getTempC(dsaddr[currentTsensor]):sensors.getTempF(dsaddr[currentTsensor])) * 10.)) / 10.;
 
+
   // Only send data if temperature has changed and no error
   #if COMPARE_TEMP == 1
   if ( (lastTemperature[currentTsensor] != temperature || boolRecheckSensorValues ) && temperature != -127.00 && temperature != 85.00) {
@@ -335,23 +418,32 @@ void readTemperature(){
   if (temperature != -127.00 && temperature != 85.00) {
   #endif
 
-      //Отсылаем состояние сенсора с подтверждением получения
-     iCount = MESSAGE_ACK_RETRY_COUNT;
+      if ( temperature > 59 && !boolSwitchOffPowerDisabled )
+      {
+        switchPowerOFF(); //Выключить электричество, если какой-то из автоматов нагрелся более чем на 59 градусов
+      }
 
-       while( !gotAck && iCount > 0 )
+        if ( abs(lastTemperature[currentTsensor] - temperature ) >= 1)
         {
-    	// Send in the new temperature
-    	gw.send(TempMsg.setSensor(getSensorIndex(dsaddr[currentTsensor])).set(temperature,1), true);
-         gw.wait(RADIO_RESET_DELAY_TIME);
-          iCount--;
-       }
+            //Отсылаем состояние сенсора с подтверждением получения
+            iCount = MESSAGE_ACK_RETRY_COUNT;
 
-       gotAck = false;
+              while( !gotAck && iCount > 0 )
+                {
+    	             // Send in the new temperature                  
+    	             gw.send(TempMsg.setSensor(getSensorIndex(dsaddr[currentTsensor])).set(temperature,1), true);
+                    gw.wait(RADIO_RESET_DELAY_TIME);
+                  iCount--;
+                 }
 
+                gotAck = false;
+          }
     // Save new temperatures for next compare
     lastTemperature[currentTsensor] = temperature;
 
   }
+ 
+ /*
   #ifdef NDEBUG
   Serial.print(F("Temperature "));
   Serial.print(currentTsensor,DEC);
@@ -363,12 +455,34 @@ void readTemperature(){
   Serial.print(F(" time elapsed: "));
   Serial.println(etime);
   #endif
-  
+  */
+  if ( temperature > highestSensorsTemperature )
+  {
+    highestSensorsTemperature = temperature;
+  }
+
   currentTsensor++;
   if (currentTsensor < numSensors && currentTsensor < MAX_ATTACHED_DS18B20) {
     // postpone next sensor reading
     timer.setTimeout(25, readTemperature);    
+  } else
+  {
+      if (highestSensorsTemperature < 35 )
+      {
+        setLEDColor(false,true,false);
+
+      } else if (highestSensorsTemperature >= 35 && highestSensorsTemperature < 50)
+            {
+                  setLEDColor(false,false,true);
+
+            } else if ( highestSensorsTemperature >= 50 )
+                    {
+                      setLEDColor(true,false,false);
+                    }
+
+      highestSensorsTemperature = 0;
   }
+
 }
 
 
@@ -403,15 +517,15 @@ void checkRelayStatus()
 
      lightLevel = (1023-analogRead(LIGHT_SENSOR_POWEOFFRELAY))/10.23; 
 
-        #ifdef NDEBUG
-          Serial.print(F("Relay power light level # "));
-          Serial.println(lightLevel);
-        #endif
+ //       #ifdef NDEBUG
+ //         Serial.print(F("Relay power light level # "));
+ //         Serial.println(lightLevel);
+ //       #endif
             
       if (lightLevel > 0)
       {    
 
-          if (lightLevel != lastRelayPowerStatusLightLevel || boolRecheckSensorValues) {
+          if ( (lightLevel != lastRelayPowerStatusLightLevel) || boolRecheckSensorValues) {
 
 
       //Отсылаем состояние сенсора с подтверждением получения
@@ -434,16 +548,145 @@ void checkRelayStatus()
     
           lightLevel=0;
 
-
-
   }  
   
 }
 
 
+void checkButtonState()
+{
+    debouncer.update();
+  // Get the update value
+  int value = debouncer.read();
+ 
+  if (value != boolHardwareSwitchOffPowerDisabled || boolRecheckSensorValues) {
+
+    if (!boolNightMode)
+    {
+      digitalWrite(MODELED_PIN, value ? 1 : 0);
+    }
+
+    //Отсылаем состояние сенсора с подтверждением получения
+    iCount = MESSAGE_ACK_RETRY_COUNT;
+
+    while( !gotAck && iCount > 0 )
+    {
+      gw.send(ButtonStateMsg.set(value==HIGH ? 1 : 0), true); // Send motion value to gw
+      gw.wait(RADIO_RESET_DELAY_TIME);
+      iCount--;
+    }
+    gotAck = false;
+
+     boolHardwareSwitchOffPowerDisabled = value ? 1 : 0;
+     boolSwitchOffPowerDisabled = value ? 1 : 0;
+
+    reportSwitchOffPowerCheckState();
 
 
+  }
 
+      checkAmbientLight();
+}
+
+
+void ledShowTempState()
+{
+
+highestSensorsTemperature = 0;
+
+
+ for (int currentTsensor = 0; currentTsensor < numSensors; currentTsensor++) 
+ {
+       if ( lastTemperature[currentTsensor] > highestSensorsTemperature )
+      {
+        highestSensorsTemperature = lastTemperature[currentTsensor];
+      }
+ }
+
+
+  
+      if (highestSensorsTemperature < 35 )
+      {
+        setLEDColor(false,true,false);
+
+      } else if (highestSensorsTemperature >= 35 && highestSensorsTemperature < 50)
+            {
+                  setLEDColor(true,true,false);
+
+            } else if ( highestSensorsTemperature >= 50 )
+                    {
+                      setLEDColor(true,false,false);
+                    }
+
+}
+
+
+void checkAmbientLight()
+{
+  
+
+  int  lightLevel=0;
+  
+
+     lightLevel = (1023-analogRead(LIGHT_SENSOR_AMBIENT))/10.23; 
+
+        #ifdef NDEBUG
+          Serial.print(F("Ambient light level # "));
+          Serial.println(lightLevel);
+        #endif
+ /*           
+      if (lightLevel > 0)
+      {    
+
+          if ( (lightLevel != lastRelayPowerStatusLightLevel) || boolRecheckSensorValues) {
+
+
+      //Отсылаем состояние сенсора с подтверждением получения
+     iCount = MESSAGE_ACK_RETRY_COUNT;
+
+       while( !gotAck && iCount > 0 )
+        {
+         gw.send(RelayPowerStatusLightMsg.set(lightLevel), true);   // Send motion value to gw
+         gw.wait(RADIO_RESET_DELAY_TIME);
+          iCount--;
+       }
+
+       gotAck = false;
+
+            
+              
+            lastRelayPowerStatusLightLevel = lightLevel;
+          }
+    
+    
+          lightLevel=0;
+
+  }  
+ */ 
+}
+
+
+void switchPowerOFF()
+{
+
+  	digitalWrite(POWEOFFRELAY_PIN, RELAY_ON);
+   	gw.wait(200);
+  	digitalWrite(POWEOFFRELAY_PIN, RELAY_OFF);
+
+}
+
+
+void setLEDColor(boolean bRed, boolean bGreen, boolean bBlue)
+{
+  if (!boolNightMode)
+  {
+    digitalWrite(A0, bBlue ? 0 : 1);
+    digitalWrite(A1, bGreen ? 0 : 1);    
+    digitalWrite(A2, bRed ? 0 : 1);   
+  }     
+}
+
+/*
 #ifdef NDEBUG
 // function to print a device address
 void printAddress(DeviceAddress deviceAddress)
@@ -456,3 +699,4 @@ void printAddress(DeviceAddress deviceAddress)
   }
 }
 #endif
+*/
