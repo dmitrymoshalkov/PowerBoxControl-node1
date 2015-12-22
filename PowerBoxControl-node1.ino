@@ -21,6 +21,7 @@
 #define CHILD_ID_POWEOFFRELAY				  30  //Реле 1
 
 #define CHILD_ID_POWEOFFRELAY_STATUS	  20  //Фоторезистор на светодиоде статуса реле 1
+#define CHILD_ID_AMBIENTLIGHT           21
 #define CHILD_ID_MODEBUTTON             40
 
 #define REBOOT_CHILD_ID                       100
@@ -68,12 +69,17 @@ boolean gotAck=false; //подтверждение от гейта о получ
 int iCount = MESSAGE_ACK_RETRY_COUNT;
 
 boolean boolRecheckSensorValues = false;
+boolean boolRecheckTempValues = false;
 boolean boolSwitchOffPowerDisabled = false;
+
+boolean boolReportPowerOffDisabledState = false;
 
 int lastRelayPowerStatusLightLevel;             // Holds last light level
 boolean boolHardwareSwitchOffPowerDisabled = false;
 
 float highestSensorsTemperature = 0;
+float lasthighestSensorsTemperature = 0;
+int lastAmbientLightLevel = 0;
 
 boolean boolNightMode = false;
 
@@ -92,12 +98,14 @@ MyMessage RelayPowerStatusLightMsg(CHILD_ID_POWEOFFRELAY_STATUS, V_LIGHT_LEVEL);
 
 MyMessage ButtonStateMsg(CHILD_ID_MODEBUTTON, V_TRIPPED);
 
+MyMessage AmbientLightLevelMsg(CHILD_ID_AMBIENTLIGHT, V_LIGHT_LEVEL);
+
 boolean receivedConfig = false;
 boolean metric = true; 
 
 SimpleTimer timer;
 SimpleTimer SwitchOffPowerCheckStateReporttimer;
-SimpleTimer checkRelayPowerStatus;
+//SimpleTimer checkRelayPowerStatus;
 SimpleTimer checkHardwareButton;
 
 
@@ -130,6 +138,8 @@ setLEDColor(false,false,true);
 
   // Send the sketch version information to the gateway and Controller
   gw.sendSketchInfo("Power box temp sensor", "1.0");
+
+
 
   // Fetch the number of attached temperature sensors  
   numSensors = sensors.getDeviceCount();
@@ -185,7 +195,7 @@ setLEDColor(false,false,true);
 
     //reboot sensor command
     gw.wait(RADIO_RESET_DELAY_TIME);
-    gw.present(REBOOT_CHILD_ID, S_BINARY);
+    gw.present(REBOOT_CHILD_ID, S_BINARY); //, "Reboot node sensor", true); 
 
     //reget sensor values
     gw.wait(RADIO_RESET_DELAY_TIME);
@@ -195,6 +205,10 @@ setLEDColor(false,false,true);
      gw.wait(RADIO_RESET_DELAY_TIME);
   	gw.present(DISABLE_SWITCHOFFPOWER_CHILD_ID, S_LIGHT); 
 
+
+  //ambient light level
+     gw.wait(RADIO_RESET_DELAY_TIME);
+    gw.present(CHILD_ID_AMBIENTLIGHT, S_LIGHT_LEVEL); 
 
     // Relays
     pinMode(POWEOFFRELAY_PIN, OUTPUT); 
@@ -212,7 +226,7 @@ setLEDColor(false,false,true);
 
     //Night mode
     gw.wait(RADIO_RESET_DELAY_TIME);
-    gw.present(NIGHTMODE_CHILD_ID, V_TRIPPED); 
+    gw.present(NIGHTMODE_CHILD_ID, S_DOOR); 
 
      //set led pin mode
       pinMode(MODELED_PIN, OUTPUT);
@@ -226,13 +240,15 @@ setLEDColor(false,false,true);
       debouncer.attach(MODEBUTTON_PIN);
       debouncer.interval(5);
  
-      checkButtonState();
+
+
+      boolRecheckSensorValues = true;
 
   // start our periodic jobs
   // many other periodic jobs can be added here
-  timer.setInterval(15000, checkTemperature);
+  timer.setInterval(10000, checkTemperature);
   SwitchOffPowerCheckStateReporttimer.setInterval(120000, reportSwitchOffPowerCheckState);
-  checkRelayPowerStatus.setInterval(120000, checkRelayStatus);
+  //checkRelayPowerStatus.setInterval(120000, checkRelayStatus);
   checkHardwareButton.setInterval(5000, checkButtonState);
 
 
@@ -254,7 +270,7 @@ setLEDColor(false,false,false);
 void loop() {
   timer.run();
   SwitchOffPowerCheckStateReporttimer.run();
-  checkRelayPowerStatus.run();
+  //checkRelayPowerStatus.run();
   checkHardwareButton.run();
 
   gw.process();
@@ -262,11 +278,16 @@ void loop() {
 
 if (boolRecheckSensorValues)
 {
-  checkTemperature();
   checkRelayStatus();
   checkButtonState();
-
+  checkAmbientLight();
   boolRecheckSensorValues = false;
+}
+
+if (boolReportPowerOffDisabledState)
+{
+   reportSwitchOffPowerCheckState();
+   boolReportPowerOffDisabledState = false;
 }
     //reset watchdog timer
     wdt_reset();    
@@ -306,14 +327,17 @@ void incomingMessage(const MyMessage &message) {
          
          if (message.getBool() == true)
          {
-            boolSwitchOffPowerDisabled = true;
+            boolSwitchOffPowerDisabled = true;           
          }
          else
          {
             boolSwitchOffPowerDisabled = false;
          }
 
+            digitalWrite(MODELED_PIN, boolSwitchOffPowerDisabled ? 0 : 1); 
+            boolReportPowerOffDisabledState = true;
      }
+
     if ( message.sensor == NIGHTMODE_CHILD_ID  ) {
          
          if (message.getBool() == true)
@@ -325,7 +349,9 @@ void incomingMessage(const MyMessage &message) {
          else
          {
             boolNightMode = false;
-            digitalWrite(MODELED_PIN, boolHardwareSwitchOffPowerDisabled ? 1 : 0);
+            digitalWrite(MODELED_PIN, boolSwitchOffPowerDisabled ? 0 : 1);
+            visualizeCurrentTempState ( lasthighestSensorsTemperature );
+            
          }
 
      }
@@ -336,6 +362,8 @@ void incomingMessage(const MyMessage &message) {
          if (message.getBool() == true)
          {
             boolRecheckSensorValues = true;
+            boolRecheckTempValues = true;
+
          }
 
      }
@@ -413,7 +441,7 @@ void readTemperature(){
 
   // Only send data if temperature has changed and no error
   #if COMPARE_TEMP == 1
-  if ( (lastTemperature[currentTsensor] != temperature || boolRecheckSensorValues ) && temperature != -127.00 && temperature != 85.00) {
+  if ( ((lastTemperature[currentTsensor] != temperature) || boolRecheckTempValues ) && temperature != -127.00 && temperature != 85.00) {
   #else
   if (temperature != -127.00 && temperature != 85.00) {
   #endif
@@ -423,7 +451,7 @@ void readTemperature(){
         switchPowerOFF(); //Выключить электричество, если какой-то из автоматов нагрелся более чем на 59 градусов
       }
 
-        if ( abs(lastTemperature[currentTsensor] - temperature ) >= 1)
+        if ( (abs(lastTemperature[currentTsensor] - temperature ) >= 1) || boolRecheckTempValues )
         {
             //Отсылаем состояние сенсора с подтверждением получения
             iCount = MESSAGE_ACK_RETRY_COUNT;
@@ -467,31 +495,44 @@ void readTemperature(){
     timer.setTimeout(25, readTemperature);    
   } else
   {
-      if (highestSensorsTemperature < 35 )
-      {
-        setLEDColor(false,true,false);
 
-      } else if (highestSensorsTemperature >= 35 && highestSensorsTemperature < 50)
-            {
-                  setLEDColor(false,false,true);
+      visualizeCurrentTempState ( highestSensorsTemperature );
 
-            } else if ( highestSensorsTemperature >= 50 )
-                    {
-                      setLEDColor(true,false,false);
-                    }
-
+      lasthighestSensorsTemperature = highestSensorsTemperature;              
       highestSensorsTemperature = 0;
+
+      if (boolRecheckTempValues)
+      {
+        boolRecheckTempValues=false;
+      }
   }
 
 }
 
+
+void visualizeCurrentTempState ( float fTemp )
+{
+
+        if (fTemp < 35 )
+      {
+        setLEDColor(false,true,false);
+
+      } else if (fTemp >= 35 && fTemp < 50)
+            {
+                  setLEDColor(false,false,true);
+
+            } else if ( fTemp >= 50 )
+                    {
+                      setLEDColor(true,false,false);
+                    }
+}
 
 
 void reportSwitchOffPowerCheckState()
 {
 
 
-      //Отсылаем состояние сенсора с подтверждением получения
+      //Отсылаем состояние сенсора софт блокировки выключения питания по температуре с подтверждением получения
      iCount = MESSAGE_ACK_RETRY_COUNT;
 
        while( !gotAck && iCount > 0 )
@@ -503,7 +544,21 @@ void reportSwitchOffPowerCheckState()
 
        gotAck = false;
 
+    //Отсылаем состояние сенсора аппаратной блокировки выключения питания с подтверждением получения
+    iCount = MESSAGE_ACK_RETRY_COUNT;
 
+    while( !gotAck && iCount > 0 )
+    {
+//      gw.send(ButtonStateMsg.set(value==HIGH ? 1 : 0), true); 
+      gw.send(ButtonStateMsg.set(boolHardwareSwitchOffPowerDisabled), true);       
+      gw.wait(RADIO_RESET_DELAY_TIME);
+      iCount--;
+    }
+    gotAck = false;       
+
+      checkRelayStatus();
+
+      checkAmbientLight();
 
 }
 
@@ -559,11 +614,14 @@ void checkButtonState()
   // Get the update value
   int value = debouncer.read();
  
+  value=value ? 0 : 1;
+
   if (value != boolHardwareSwitchOffPowerDisabled || boolRecheckSensorValues) {
+
 
     if (!boolNightMode)
     {
-      digitalWrite(MODELED_PIN, value ? 1 : 0);
+      digitalWrite(MODELED_PIN, value ? 0 : 1 );
     }
 
     //Отсылаем состояние сенсора с подтверждением получения
@@ -571,21 +629,34 @@ void checkButtonState()
 
     while( !gotAck && iCount > 0 )
     {
-      gw.send(ButtonStateMsg.set(value==HIGH ? 1 : 0), true); // Send motion value to gw
+//      gw.send(ButtonStateMsg.set(value==HIGH ? 1 : 0), true); 
+      gw.send(ButtonStateMsg.set(value), true);       
       gw.wait(RADIO_RESET_DELAY_TIME);
       iCount--;
     }
     gotAck = false;
 
-     boolHardwareSwitchOffPowerDisabled = value ? 1 : 0;
-     boolSwitchOffPowerDisabled = value ? 1 : 0;
+     boolHardwareSwitchOffPowerDisabled = boolSwitchOffPowerDisabled = value;
 
-    reportSwitchOffPowerCheckState();
+
+    //reportSwitchOffPowerCheckState();
+
+       //Отсылаем состояние сенсора с подтверждением получения
+     iCount = MESSAGE_ACK_RETRY_COUNT;
+
+       while( !gotAck && iCount > 0 )
+        {
+         gw.send(SwitchOffPowerCheckStateMsg.set(boolSwitchOffPowerDisabled ? "1" : "0" ), true);    // Send motion value to gw
+         gw.wait(RADIO_RESET_DELAY_TIME);
+          iCount--;
+       }
+
+       gotAck = false;
 
 
   }
 
-      checkAmbientLight();
+
 }
 
 
@@ -634,11 +705,11 @@ void checkAmbientLight()
           Serial.print(F("Ambient light level # "));
           Serial.println(lightLevel);
         #endif
- /*           
+            
       if (lightLevel > 0)
       {    
 
-          if ( (lightLevel != lastRelayPowerStatusLightLevel) || boolRecheckSensorValues) {
+          if ( (lightLevel != lastAmbientLightLevel) || boolRecheckSensorValues) {
 
 
       //Отсылаем состояние сенсора с подтверждением получения
@@ -646,7 +717,7 @@ void checkAmbientLight()
 
        while( !gotAck && iCount > 0 )
         {
-         gw.send(RelayPowerStatusLightMsg.set(lightLevel), true);   // Send motion value to gw
+         gw.send(AmbientLightLevelMsg.set(lightLevel), true);   // Send motion value to gw
          gw.wait(RADIO_RESET_DELAY_TIME);
           iCount--;
        }
@@ -655,14 +726,14 @@ void checkAmbientLight()
 
             
               
-            lastRelayPowerStatusLightLevel = lightLevel;
+            lastAmbientLightLevel = lightLevel;
           }
     
     
           lightLevel=0;
 
   }  
- */ 
+  
 }
 
 
