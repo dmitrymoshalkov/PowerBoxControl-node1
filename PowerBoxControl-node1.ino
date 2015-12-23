@@ -56,6 +56,8 @@
 #define RADIO_RESET_DELAY_TIME 20 //Задержка между сообщениями
 #define MESSAGE_ACK_RETRY_COUNT 5  //количество попыток отсылки сообщения с запросом подтверждения
 
+#define NUM_OF_PRESENTED_TEMP_SENSORS 14
+
 OneWire oneWire(ONE_WIRE_BUS);        // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 DallasTemperature sensors(&oneWire);  // Pass the oneWire reference to Dallas Temperature. 
 
@@ -240,7 +242,7 @@ setLEDColor(false,false,true);
       debouncer.attach(MODEBUTTON_PIN);
       debouncer.interval(5);
  
-
+      startupChecks(numSensors);
 
       boolRecheckSensorValues = true;
 
@@ -334,7 +336,10 @@ void incomingMessage(const MyMessage &message) {
             boolSwitchOffPowerDisabled = false;
          }
 
-            digitalWrite(MODELED_PIN, boolSwitchOffPowerDisabled ? 0 : 1); 
+                if (!boolNightMode)
+                {           
+                    digitalWrite(MODELED_PIN, boolSwitchOffPowerDisabled ? 0 : 1); 
+                }
             boolReportPowerOffDisabledState = true;
      }
 
@@ -448,6 +453,7 @@ void readTemperature(){
 
       if ( temperature > 59 && !boolSwitchOffPowerDisabled )
       {
+        //TODO: отослать номер сенсора
         switchPowerOFF(); //Выключить электричество, если какой-то из автоматов нагрелся более чем на 59 градусов
       }
 
@@ -756,6 +762,69 @@ void setLEDColor(boolean bRed, boolean bGreen, boolean bBlue)
     digitalWrite(A2, bRed ? 0 : 1);   
   }     
 }
+
+/* Проверка при загрузке                                                            */
+/* При ошибке мигает светодиодом:                                                    */
+/* RED-GREEN - нет питания на реле                                                  */
+/* RED-BLUE - не найдены один или несколько температурных сенсоров                  */
+
+void startupChecks(int numOfSensors)
+{
+  int  lightLevel=0;
+
+
+      debouncer.update();
+
+      // Get the update value
+      int value = debouncer.read();
+ 
+      value=value ? 0 : 1;
+  
+
+     lightLevel = (1023-analogRead(LIGHT_SENSOR_POWEOFFRELAY))/10.23; 
+
+            
+      if (lightLevel < 80 && !value)
+      { 
+          //error. Blink RED+BLUE
+
+          while (!value)
+          {
+            setLEDColor(true, false, false);
+
+            gw.wait(500);
+          
+            setLEDColor(false, true, false);
+
+            gw.wait(500);
+
+            debouncer.update();
+            value = debouncer.read();
+            value=value ? 0 : 1;
+        };
+
+      }
+
+      if (numOfSensors < NUM_OF_PRESENTED_TEMP_SENSORS && !value)
+      { 
+          while (!value)
+          {
+            setLEDColor(true, false, false);
+
+            gw.wait(500);
+          
+            setLEDColor(false, false, true);
+
+            gw.wait(500);
+
+            debouncer.update();
+            value = debouncer.read();
+            value=value ? 0 : 1;
+        };
+      }
+
+}
+
 
 /*
 #ifdef NDEBUG
