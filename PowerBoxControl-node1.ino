@@ -10,7 +10,7 @@
 #include <avr/wdt.h>
 
 
- #define NDEBUG                        // enable local debugging information
+ //#define NDEBUG                        // enable local debugging information
 
 #define NODE_ID 190 //На даче поменять на 100
 
@@ -241,6 +241,13 @@ setLEDColor(false,false,true);
       // After setting up the button, setup debouncer
       debouncer.attach(MODEBUTTON_PIN);
       debouncer.interval(5);
+
+    gw.wait(RADIO_RESET_DELAY_TIME); 
+    gw.request(DISABLE_SWITCHOFFPOWER_CHILD_ID, V_LIGHT);
+
+    gw.wait(RADIO_RESET_DELAY_TIME); 
+    gw.request(NIGHTMODE_CHILD_ID, V_TRIPPED); 
+
  
       startupChecks(numSensors);
 
@@ -305,7 +312,7 @@ void incomingMessage(const MyMessage &message) {
     return;
   }
 
-    if ( message.sensor == REBOOT_CHILD_ID && message.getBool() == true ) {
+    if ( message.sensor == REBOOT_CHILD_ID && message.getBool() == true && strlen(message.getString())>0 ) {
              wdt_enable(WDTO_30MS);
               while(1) {};
 
@@ -325,7 +332,7 @@ void incomingMessage(const MyMessage &message) {
      
      }
 
-    if ( message.sensor == DISABLE_SWITCHOFFPOWER_CHILD_ID && !boolHardwareSwitchOffPowerDisabled) {
+    if ( message.sensor == DISABLE_SWITCHOFFPOWER_CHILD_ID && !boolHardwareSwitchOffPowerDisabled && strlen(message.getString())>0) {
          
          if (message.getBool() == true)
          {
@@ -343,7 +350,7 @@ void incomingMessage(const MyMessage &message) {
             boolReportPowerOffDisabledState = true;
      }
 
-    if ( message.sensor == NIGHTMODE_CHILD_ID  ) {
+    if ( message.sensor == NIGHTMODE_CHILD_ID  && strlen(message.getString())>0 ) {
          
          if (message.getBool() == true)
          {
@@ -362,7 +369,7 @@ void incomingMessage(const MyMessage &message) {
      }
 
 
-    if ( message.sensor == RECHECK_SENSOR_VALUES) {
+    if ( message.sensor == RECHECK_SENSOR_VALUES && strlen(message.getString())>0 ) {
          
          if (message.getBool() == true)
          {
