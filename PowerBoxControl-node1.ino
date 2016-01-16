@@ -53,7 +53,7 @@
 #define EEPROM_DEVICE_ADDR_START  64     // start byte in eeprom for remembering our sensors
 #define EEPROM_DEVICE_ADDR_END    EEPROM_DEVICE_ADDR_START+MAX_ATTACHED_DS18B20*2
 
-#define RADIO_RESET_DELAY_TIME 20 //Задержка между сообщениями
+#define RADIO_RESET_DELAY_TIME 40 //Задержка между сообщениями
 #define MESSAGE_ACK_RETRY_COUNT 5  //количество попыток отсылки сообщения с запросом подтверждения
 
 #define NUM_OF_PRESENTED_TEMP_SENSORS 14
