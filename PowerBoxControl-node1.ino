@@ -712,7 +712,12 @@ void checkAmbientLight()
   int  lightLevel=0;
   
 
-     lightLevel = (1023-analogRead(LIGHT_SENSOR_AMBIENT))/10.23; 
+     //lightLevel = (1023-analogRead(LIGHT_SENSOR_AMBIENT))/10.23; 
+
+     lightLevel = analogRead(LIGHT_SENSOR_AMBIENT); 
+
+     double Vout=lightLevel*0.0048828125;
+     lightLevel=(2500/Vout-500)/100;
 
         #ifdef NDEBUG
           Serial.print(F("Ambient light level # "));
@@ -831,6 +836,7 @@ void startupChecks(int numOfSensors)
       }
 
 }
+
 
 
 /*
