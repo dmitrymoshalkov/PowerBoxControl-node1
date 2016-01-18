@@ -1,16 +1,19 @@
 
 
+
 #include <MySensor.h>  
 #include <SPI.h>
 #include <DallasTemperature.h>
 #include <OneWire.h>
 #include <SimpleTimer.h>
-#include <DigitalIO.h>
+//#include <DigitalIO.h>
+
 #include <Bounce2.h>
 #include <avr/wdt.h>
 
 
  //#define NDEBUG                        // enable local debugging information
+
 
 #define NODE_ID 190 //На даче поменять на 100
 
@@ -49,14 +52,14 @@
 #define RELAY_OFF 0 // GPIO value to write to turn off attached relay
 
 #define COMPARE_TEMP              1      // Send temperature only if changed? 1 = Yes 0 = No
-#define MAX_ATTACHED_DS18B20      16
+#define MAX_ATTACHED_DS18B20      14
 #define EEPROM_DEVICE_ADDR_START  64     // start byte in eeprom for remembering our sensors
 #define EEPROM_DEVICE_ADDR_END    EEPROM_DEVICE_ADDR_START+MAX_ATTACHED_DS18B20*2
 
 #define RADIO_RESET_DELAY_TIME 40 //Задержка между сообщениями
 #define MESSAGE_ACK_RETRY_COUNT 5  //количество попыток отсылки сообщения с запросом подтверждения
 
-#define NUM_OF_PRESENTED_TEMP_SENSORS 14
+//#define NUM_OF_PRESENTED_TEMP_SENSORS 14
 
 OneWire oneWire(ONE_WIRE_BUS);        // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 DallasTemperature sensors(&oneWire);  // Pass the oneWire reference to Dallas Temperature. 
@@ -102,13 +105,13 @@ MyMessage ButtonStateMsg(CHILD_ID_MODEBUTTON, V_TRIPPED);
 
 MyMessage AmbientLightLevelMsg(CHILD_ID_AMBIENTLIGHT, V_LIGHT_LEVEL);
 
-boolean receivedConfig = false;
+//boolean receivedConfig = false;
 boolean metric = true; 
 
 SimpleTimer timer;
 SimpleTimer SwitchOffPowerCheckStateReporttimer;
 //SimpleTimer checkRelayPowerStatus;
-SimpleTimer checkHardwareButton;
+//SimpleTimer checkHardwareButton;
 
 
 
@@ -132,15 +135,20 @@ setLEDColor(false,false,true);
 
   // Startup up the OneWire library
   sensors.begin();
+
+  
   // requestTemperatures() will not block current thread
   sensors.setWaitForConversion(false);
 
   // Startup and initialize MySensors library. Set callback for incoming messages. 
   gw.begin(incomingMessage, NODE_ID, false);
-
+  gw.wait(RADIO_RESET_DELAY_TIME); 
   // Send the sketch version information to the gateway and Controller
-  gw.sendSketchInfo("Power box temp sensor", "1.0");
+  
 
+
+  gw.sendSketchInfo("PoweBoxTsensor", "1.1", true);
+  gw.wait(RADIO_RESET_DELAY_TIME); 
 
 
   // Fetch the number of attached temperature sensors  
@@ -251,14 +259,14 @@ setLEDColor(false,false,true);
  
       startupChecks(numSensors);
 
-      boolRecheckSensorValues = true;
+      //boolRecheckSensorValues = true;
 
   // start our periodic jobs
   // many other periodic jobs can be added here
   timer.setInterval(10000, checkTemperature);
   SwitchOffPowerCheckStateReporttimer.setInterval(120000, reportSwitchOffPowerCheckState);
-  //checkRelayPowerStatus.setInterval(120000, checkRelayStatus);
-  checkHardwareButton.setInterval(5000, checkButtonState);
+  //checkRelayPowerStatus.se  tInterval(120000, checkRelayStatus);
+  //checkHardwareButton.setInterval(5000, checkButtonState);
 
 
   //Enable watchdog timer
@@ -280,7 +288,7 @@ void loop() {
   timer.run();
   SwitchOffPowerCheckStateReporttimer.run();
   //checkRelayPowerStatus.run();
-  checkHardwareButton.run();
+  //checkHardwareButton.run();
 
   gw.process();
 
@@ -437,6 +445,8 @@ void checkTemperature(){
     currentTsensor = 0;
     timer.setTimeout(conversionTime, readTemperature);
   }
+
+  checkButtonState();
 }
 
 void readTemperature(){
@@ -464,7 +474,7 @@ void readTemperature(){
         switchPowerOFF(); //Выключить электричество, если какой-то из автоматов нагрелся более чем на 59 градусов
       }
 
-        if ( (abs(lastTemperature[currentTsensor] - temperature ) >= 1) || boolRecheckTempValues )
+        if ( (abs(lastTemperature[currentTsensor] - temperature ) >= 0.2) || boolRecheckTempValues )
         {
             //Отсылаем состояние сенсора с подтверждением получения
             iCount = MESSAGE_ACK_RETRY_COUNT;
@@ -484,6 +494,9 @@ void readTemperature(){
 
   }
  
+  //Serial.print(F(" -> "));
+  //Serial.println(temperature);
+
  /*
   #ifdef NDEBUG
   Serial.print(F("Temperature "));
@@ -526,11 +539,11 @@ void readTemperature(){
 void visualizeCurrentTempState ( float fTemp )
 {
 
-        if (fTemp < 35 )
+        if (fTemp < 40 )
       {
         setLEDColor(false,true,false);
 
-      } else if (fTemp >= 35 && fTemp < 50)
+      } else if (fTemp >= 40 && fTemp < 50)
             {
                   setLEDColor(false,false,true);
 
@@ -817,7 +830,7 @@ void startupChecks(int numOfSensors)
 
       }
 
-      if (numOfSensors < NUM_OF_PRESENTED_TEMP_SENSORS && !value)
+      if (numOfSensors < MAX_ATTACHED_DS18B20 && !value)
       { 
           while (!value)
           {
