@@ -147,7 +147,7 @@ setLEDColor(false,false,true);
   
 
 
-  gw.sendSketchInfo("PoweBoxTsensor", "1.1", true);
+  gw.sendSketchInfo("PowerBoxTsensor", "1.1", true);
   gw.wait(RADIO_RESET_DELAY_TIME); 
 
 
@@ -458,7 +458,8 @@ void readTemperature(){
   // Fetch and round temperature to one decimal
   //float temperature = static_cast<float>(static_cast<int>(sensors.getTempC(dsaddr[currentTsensor]) * 10.)) / 10.;
   // Fetch and round temperature to one decimal
-  float temperature = static_cast<float>(static_cast<int>((gw.getConfig().isMetric?sensors.getTempC(dsaddr[currentTsensor]):sensors.getTempF(dsaddr[currentTsensor])) * 10.)) / 10.;
+  //float temperature = static_cast<float>(static_cast<int>((gw.getConfig().isMetric?sensors.getTempC(dsaddr[currentTsensor]):sensors.getTempF(dsaddr[currentTsensor])) * 10.)) / 10.;
+  float temperature = static_cast<float>(static_cast<int>(sensors.getTempC(dsaddr[currentTsensor]) * 10.)) / 10.;
 
 
   // Only send data if temperature has changed and no error
@@ -497,7 +498,7 @@ void readTemperature(){
   //Serial.print(F(" -> "));
   //Serial.println(temperature);
 
- /*
+ 
   #ifdef NDEBUG
   Serial.print(F("Temperature "));
   Serial.print(currentTsensor,DEC);
@@ -509,7 +510,7 @@ void readTemperature(){
   Serial.print(F(" time elapsed: "));
   Serial.println(etime);
   #endif
-  */
+  
   if ( temperature > highestSensorsTemperature )
   {
     highestSensorsTemperature = temperature;
