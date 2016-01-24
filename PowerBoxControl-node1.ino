@@ -540,15 +540,15 @@ void readTemperature(){
 void visualizeCurrentTempState ( float fTemp )
 {
 
-        if (fTemp < 40 )
+        if (fTemp <= 45 )
       {
         setLEDColor(false,true,false);
 
-      } else if (fTemp >= 40 && fTemp < 50)
+      } else if (fTemp > 45 && fTemp <= 50)
             {
                   setLEDColor(false,false,true);
 
-            } else if ( fTemp >= 50 )
+            } else if ( fTemp > 50 )
                     {
                       setLEDColor(true,false,false);
                     }
