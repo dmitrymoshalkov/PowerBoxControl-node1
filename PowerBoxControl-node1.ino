@@ -263,7 +263,7 @@ setLEDColor(false,false,true);
 
   // start our periodic jobs
   // many other periodic jobs can be added here
-  timer.setInterval(10000, checkTemperature);
+  timer.setInterval(60000, checkTemperature);
   SwitchOffPowerCheckStateReporttimer.setInterval(120000, reportSwitchOffPowerCheckState);
   //checkRelayPowerStatus.se  tInterval(120000, checkRelayStatus);
   //checkHardwareButton.setInterval(5000, checkButtonState);
@@ -475,8 +475,8 @@ void readTemperature(){
         switchPowerOFF(); //Выключить электричество, если какой-то из автоматов нагрелся более чем на 59 градусов
       }
 
-        if ( (abs(lastTemperature[currentTsensor] - temperature ) >= 0.2) || boolRecheckTempValues )
-        {
+       // if ( (abs(lastTemperature[currentTsensor] - temperature ) >= 0.2) || boolRecheckTempValues )
+       // {
             //Отсылаем состояние сенсора с подтверждением получения
             iCount = MESSAGE_ACK_RETRY_COUNT;
 
@@ -489,7 +489,7 @@ void readTemperature(){
                  }
 
                 gotAck = false;
-          }
+        //  }
     // Save new temperatures for next compare
     lastTemperature[currentTsensor] = temperature;
 
